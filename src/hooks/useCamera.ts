@@ -19,22 +19,31 @@ export const useCamera = () => {
   const startTimeRef = useRef<number>(0);
 
   const startCamera = useCallback(async (mode?: 'user' | 'environment', quality?: '720p' | '1080p', frameRate?: number) => {
-    try {
-      const activeMode = mode || facingMode;
-      const targetWidth = quality === '1080p' ? 1920 : 1280;
-      const targetHeight = quality === '1080p' ? 1080 : 720;
-      const targetFPS = frameRate || 30;
+    const activeMode = mode || facingMode;
+    const targetWidth = quality === '1080p' ? 1920 : 1280;
+    const targetHeight = quality === '1080p' ? 1080 : 720;
+    const targetFPS = frameRate || 30;
 
-      // Ensure both camera and microphone are requested as per user's strict requirement
-      const newStream = await navigator.mediaDevices.getUserMedia({
+    // Ensure both camera and microphone are requested as per user's strict requirement
+    try {
+      const constraints: MediaStreamConstraints = {
         video: { 
           facingMode: activeMode, 
           width: { ideal: targetWidth }, 
           height: { ideal: targetHeight },
-          frameRate: { ideal: targetFPS }
+          frameRate: { 
+            ideal: targetFPS,
+            min: targetFPS === 60 ? 30 : 15 // Allow some flexibility to prevent crash
+          }
         },
-        audio: true,
-      });
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        },
+      };
+
+      const newStream = await navigator.mediaDevices.getUserMedia(constraints);
       
       setStream(newStream);
       
@@ -46,6 +55,11 @@ export const useCamera = () => {
       return newStream;
     } catch (err) {
       console.error('Error accessing camera:', err);
+      // Fallback for strict constraints failure
+      if (quality === '1080p' || frameRate === 60) {
+        console.log('Falling back to standard constraints...');
+        return startCamera(mode, '720p', 30);
+      }
       throw err;
     }
   }, [facingMode]);
@@ -60,7 +74,7 @@ export const useCamera = () => {
     }
   }, [stream]);
 
-  const switchCamera = useCallback(async (quality?: '720p' | '1080p', frameRate?: number) => {
+  const switchCamera = useCallback(async (qualitySetting?: '720p' | '1080p', fpsSetting?: number) => {
     if (isRecording) {
       console.warn('Cannot switch camera while recording');
       return;
@@ -75,44 +89,56 @@ export const useCamera = () => {
     }
 
     // Start with new mode
-    await startCamera(nextMode, quality, frameRate);
+    await startCamera(nextMode, qualitySetting, fpsSetting);
   }, [facingMode, stream, isRecording, startCamera]);
 
-  const startRecording = useCallback(() => {
+  const startRecording = useCallback((qualitySetting?: '720p' | '1080p') => {
     if (!stream || !videoRef.current) return;
 
     chunksRef.current = [];
     
     const mimeTypes = [
       'video/mp4;codecs=h264,aac',
-      'video/mp4',
+      'video/webm;codecs=h264,opus',
       'video/webm;codecs=vp9,opus',
+      'video/mp4',
       'video/webm',
     ];
     
     const supportedMimeType = mimeTypes.find(type => MediaRecorder.isTypeSupported(type)) || '';
     
-    // Use captureStream from the video element if available.
-    // This ensures that if the PiP window is moving (the video element is rendering), 
-    // the recorder gets those exact frames. It's more resilient on mobile browsers.
-    let streamToRecord: MediaStream = stream;
+    // Crucial: Use a high-quality Canvas/Video capture stream if in PiP to keep frames alive,
+    // but ALWAYS manually merge the original high-fidelity audio track.
+    let streamToRecord: MediaStream;
+    const video = videoRef.current;
+
     try {
-      if ((videoRef.current as any).captureStream) {
-        // Force 30fps capture from the video element to prevent encoder stalling
-        streamToRecord = (videoRef.current as any).captureStream(30);
-        // captureStream() might not include the audio tracks from the original stream
-        // on all browsers, so we add them manually to ensure audio is recorded.
-        stream.getAudioTracks().forEach(track => {
-          streamToRecord.addTrack(track);
-        });
+      if ((video as any).captureStream) {
+        // Create a new stream for recording
+        const visualStream = (video as any).captureStream(60); // Match max requested FPS
+        const combinedStream = new MediaStream();
+        
+        // Add visual tracks
+        visualStream.getVideoTracks().forEach(track => combinedStream.addTrack(track));
+        
+        // Add ORIGINAL audio tracks (bypass the element's mute/state)
+        stream.getAudioTracks().forEach(track => combinedStream.addTrack(track));
+        
+        streamToRecord = combinedStream;
+      } else {
+        streamToRecord = stream;
       }
     } catch (e) {
-      console.warn('captureStream failed, falling back to direct stream recording:', e);
+      console.warn('Advanced stream composition failed, using direct stream:', e);
       streamToRecord = stream;
     }
 
+    // Optimal Bitrate for High Fidelity (6-12 Mbps for 1080p)
+    const videoBitrate = qualitySetting === '1080p' ? 8000000 : 4000000;
+
     const mediaRecorder = new MediaRecorder(streamToRecord, {
       mimeType: supportedMimeType,
+      videoBitsPerSecond: videoBitrate,
     });
 
     mediaRecorder.ondataavailable = (e) => {
@@ -155,6 +181,11 @@ export const useCamera = () => {
     const video = videoRef.current;
     if (!video) return;
 
+    if (!document.pictureInPictureEnabled) {
+      console.warn('PiP is not enabled in this browser context');
+      return;
+    }
+
     try {
       if (document.pictureInPictureElement) {
         await document.exitPictureInPicture();
@@ -172,7 +203,7 @@ export const useCamera = () => {
           const timeoutId = setTimeout(() => {
             video.removeEventListener('loadedmetadata', handler);
             reject(new Error('Metadata timeout'));
-          }, 5000); // Increase to 5s
+          }, 8000); // Increase to 8s for standalone mode
 
           video.addEventListener('loadedmetadata', handler, { once: true });
           
