@@ -11,12 +11,15 @@ export interface SavedVideo {
 export const useCamera = () => {
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [isRecording, setIsRecording] = useState(false);
+  const [recorderState, setRecorderState] = useState<'inactive' | 'recording' | 'paused'>('inactive');
   const [recordings, setRecordings] = useState<SavedVideo[]>([]);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const startTimeRef = useRef<number>(0);
+  const pausedTimeRef = useRef<number>(0);
+  const pauseStartRef = useRef<number>(0);
 
   const startCamera = useCallback(async (mode?: 'user' | 'environment', quality?: '720p' | '1080p', frameRate?: number) => {
     const activeMode = mode || facingMode;
@@ -45,6 +48,35 @@ export const useCamera = () => {
 
       const newStream = await navigator.mediaDevices.getUserMedia(constraints);
       
+      // Handle system interruptions (Control Center, backgrounding)
+      newStream.getTracks().forEach(track => {
+        track.onmute = () => {
+          if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+            console.log('Operational Halt: System resource lock detected');
+            mediaRecorderRef.current.pause();
+          }
+        };
+        track.onunmute = async () => {
+          if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'paused') {
+            console.log('Resource Restored: Synching stream...');
+            // Optional: check if track is actually producing data
+            if (track.readyState === 'live') {
+              mediaRecorderRef.current.resume();
+            } else {
+              console.warn('Track stuck in dead state, attempting recovery');
+            }
+          }
+        };
+        // If track ends unexpectedly
+        track.onended = () => {
+          if (isRecording) {
+            console.warn('Track ended unexpectedly while recording');
+            // We should stop recording or try to recover? For now, stop to save data
+            stopRecording();
+          }
+        };
+      });
+
       setStream(newStream);
       setFacingMode(activeMode);
       
@@ -119,6 +151,19 @@ export const useCamera = () => {
       videoBitsPerSecond: videoBitrate,
     });
 
+    mediaRecorder.onpause = () => {
+      pauseStartRef.current = Date.now();
+      setRecorderState('paused');
+    };
+
+    mediaRecorder.onresume = () => {
+      if (pauseStartRef.current > 0) {
+        pausedTimeRef.current += (Date.now() - pauseStartRef.current);
+        pauseStartRef.current = 0;
+      }
+      setRecorderState('recording');
+    };
+
     mediaRecorder.ondataavailable = (e) => {
       if (e.data.size > 0) {
         chunksRef.current.push(e.data);
@@ -126,9 +171,20 @@ export const useCamera = () => {
     };
 
     mediaRecorder.onstop = () => {
+      setRecorderState('inactive');
       const blob = new Blob(chunksRef.current, { type: supportedMimeType });
       const url = URL.createObjectURL(blob);
-      const duration = Date.now() - startTimeRef.current;
+      
+      // Calculate real duration excluding pause time
+      const now = Date.now();
+      let finalPausedTime = pausedTimeRef.current;
+      if (pauseStartRef.current > 0) {
+        finalPausedTime += (now - pauseStartRef.current);
+      }
+      
+      const rawDuration = now - startTimeRef.current - finalPausedTime;
+      // Sanity check: duration cannot be negative or absurdly long (e.g., > 24 hours for a single clip)
+      const duration = Math.max(0, Math.min(rawDuration, 86400000));
       
       const newVideo: SavedVideo = {
         id: Math.random().toString(36).substr(2, 9),
@@ -143,9 +199,12 @@ export const useCamera = () => {
 
     mediaRecorderRef.current = mediaRecorder;
     startTimeRef.current = Date.now();
+    pausedTimeRef.current = 0;
+    pauseStartRef.current = 0;
     // Request data every 1000ms to keep the recording process active
     mediaRecorder.start(1000);
     setIsRecording(true);
+    setRecorderState('recording');
   }, [stream]);
 
   const stopRecording = useCallback(() => {
@@ -199,6 +258,7 @@ export const useCamera = () => {
   return {
     stream,
     isRecording,
+    recorderState,
     recordings,
     videoRef,
     startCamera,

@@ -29,6 +29,7 @@ export default function App() {
   const { 
     stream, 
     isRecording, 
+    recorderState,
     recordings, 
     videoRef, 
     startCamera, 
@@ -76,6 +77,22 @@ export default function App() {
     }
     return () => clearInterval(aliveTimer);
   }, [isInitialized, stream]);
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+          mediaRecorderRef.current.pause();
+        }
+      } else {
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'paused') {
+          mediaRecorderRef.current.resume();
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [mediaRecorderRef]);
 
   const t = {
     zh: {
@@ -288,10 +305,17 @@ export default function App() {
 
   useEffect(() => {
     let interval: number;
-    if (isRecording) interval = window.setInterval(() => setRecordingTime(prev => prev + 1), 1000);
-    else setRecordingTime(0);
+    if (isRecording) {
+      interval = window.setInterval(() => {
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+          setRecordingTime(prev => prev + 1);
+        }
+      }, 1000);
+    } else {
+      setRecordingTime(0);
+    }
     return () => clearInterval(interval);
-  }, [isRecording]);
+  }, [isRecording, mediaRecorderRef]);
 
   const handleFix = async () => {
     await handleStart();
@@ -326,7 +350,14 @@ export default function App() {
       <div className="flex-1 flex flex-col overflow-y-auto px-4 gap-6 scrollbar-hide overscroll-contain">
         <div className={`transition-all duration-500 shrink-0 ${!isDisguised && activeTab === 'record' && isInitialized ? 'relative w-full rounded-[3rem] shadow-2xl bg-zinc-900 overflow-hidden min-h-[200px]' : 'fixed w-8 h-8 opacity-0 pointer-events-none'}`}>
           <video ref={videoRef} autoPlay muted playsInline className={`w-full h-auto max-h-[60vh] object-contain ${facingMode === 'user' ? 'scale-x-[-1]' : ''}`} />
-          {isRecording && !isDisguised && <div className="absolute top-6 left-6 flex items-center gap-2 bg-black/50 px-3 py-1 rounded-full"><div className="w-2 h-2 bg-ios-red rounded-full animate-pulse" /><span className="text-xs font-mono">{formatTime(recordingTime)}</span></div>}
+          {isRecording && !isDisguised && (
+            <div className="absolute top-6 left-6 flex items-center gap-2 bg-black/50 px-3 py-1 rounded-full">
+              <div className={`w-2 h-2 rounded-full ${recorderState === 'paused' ? 'bg-yellow-500' : 'bg-ios-red animate-pulse'}`} />
+              <span className="text-xs font-mono">
+                {recorderState === 'paused' ? 'PAUSED' : formatTime(recordingTime)}
+              </span>
+            </div>
+          )}
           {!isDisguised && activeTab === 'record' && (
             <div className="absolute top-6 right-6 flex gap-2">
               <button onClick={() => switchCamera(quality, frameRate)} className="p-3 bg-black/50 rounded-2xl text-white"><RefreshCw className="w-5 h-5" /></button>
