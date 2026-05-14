@@ -134,6 +134,7 @@ export const useCamera = () => {
         
         // Add listeners to ensure video keeps playing during/after PiP transitions
         video.onenterpictureinpicture = () => {
+          video.muted = false; // Ensure unmuted to keep rendering engine high priority
           video.play().catch(() => {});
         };
         
@@ -229,19 +230,30 @@ export const useCamera = () => {
     
     const supportedMimeType = mimeTypes.find(type => MediaRecorder.isTypeSupported(type)) || '';
     
-    // USE CAPTURE STREAM IF POSSIBLE
-    // Since the user sees correct video in PiP, the video element is definitely rendering.
-    // By capturing from the video element, we ensure the recording matches the PiP window.
-    // @ts-ignore
-    const streamToRecord = (videoRef.current && typeof videoRef.current.captureStream === 'function') 
-      ? videoRef.current.captureStream(targetFPS) 
-      : stream;
+    // THE STABILITY FIX: HYBRID STREAM CONSTRUCTION
+    // 1. Capture Video from the rendering element (PiP works, so this is high confidence)
+    // 2. Take Audio from the original source stream (highest fidelity)
+    const combinedStream = new MediaStream();
+    
+    if (videoRef.current && typeof videoRef.current.captureStream === 'function') {
+      // @ts-ignore
+      const capturedVideoStream = videoRef.current.captureStream(targetFPS);
+      capturedVideoStream.getVideoTracks().forEach((track: MediaStreamTrack) => {
+        combinedStream.addTrack(track);
+      });
+    } else {
+      // Fallback: use raw stream tracks
+      stream.getVideoTracks().forEach(track => combinedStream.addTrack(track));
+    }
+    
+    // CRITICAL: Always attach original audio tracks to ensure sound presence
+    stream.getAudioTracks().forEach(track => combinedStream.addTrack(track));
 
     // High Fidelity Bitrate (10-12 Mbps for 1080p, 5-6 Mbps for 720p)
-    const videoBitrate = qualitySetting === '1080p' ? 12000000 : 6000000;
+    const videoBitrate = qualitySetting === '1080p' ? 12000000 : 8000000;
     const audioBitrate = 128000; // 128 kbps for high quality audio
 
-    const mediaRecorder = new MediaRecorder(streamToRecord, {
+    const mediaRecorder = new MediaRecorder(combinedStream, {
       mimeType: supportedMimeType,
       videoBitsPerSecond: videoBitrate,
       audioBitsPerSecond: audioBitrate,
