@@ -68,10 +68,16 @@ export default function App() {
         if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'paused') {
           mediaRecorderRef.current.resume();
         }
+        // Force video play on return
+        if (videoRef.current) videoRef.current.play().catch(() => {});
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('pageshow', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('pageshow', handleVisibilityChange);
+    };
   }, [mediaRecorderRef]);
 
   const t = {
@@ -193,7 +199,9 @@ export default function App() {
             lastTimeRef.current = video.currentTime;
           }
 
+          // Aggressive recovery
           if (isFrozen && (frozenCountRef.current === 2 || document.pictureInPictureElement)) {
+            // Jiggle the currentTime to shake off browser-level pauses
             video.currentTime = video.currentTime;
             video.play().catch(() => {});
             if (isRecording && mediaRecorderRef.current) {
@@ -201,7 +209,8 @@ export default function App() {
             }
           } 
           
-          if (isFrozen && (frozenCountRef.current === 4 || (isRecording && frozenCountRef.current === 3))) {
+          // Moderate Stage Recovery: Source re-assignment
+          if (isFrozen && (frozenCountRef.current === 3 || (isRecording && frozenCountRef.current === 2))) {
             const currentStream = video.srcObject;
             video.srcObject = null;
             setTimeout(() => {
@@ -210,17 +219,24 @@ export default function App() {
                 videoRef.current.play().catch(() => {});
               }
             }, 50);
-          } else if (isFrozen && (frozenCountRef.current === 6 || (isRecording && frozenCountRef.current === 5))) {
+          } 
+          // Hard Stage Recovery: Full restart
+          else if (isFrozen && (frozenCountRef.current === 8 || (isRecording && frozenCountRef.current === 6))) {
+            console.log('Priority Recovery Triggered: Hard restart...');
             const wasRecording = isRecording;
-            if (wasRecording) stopRecording();
+            if (wasRecording) {
+              // Attempt to save what we have before crashing/restarting
+              stopRecording();
+            }
             await handleStart().catch(() => {});
             if (wasRecording) {
-              setTimeout(() => startRecording(quality), 1000);
+              // Delay resume to let stream stabilize
+              setTimeout(() => startRecording(quality), 1500);
             }
             frozenCountRef.current = 0;
           }
 
-          if (isActuallyPaused || frozenCountRef.current > 2) {
+          if (isActuallyPaused || frozenCountRef.current > 1) {
             setSystemHealth('warning');
           } else {
             setSystemHealth('nominal');
@@ -235,7 +251,7 @@ export default function App() {
     };
     
     if (isInitialized) {
-      healthTimer = window.setInterval(checkHealth, 2000);
+      healthTimer = window.setInterval(checkHealth, 1000); // 1s interval for faster response
     }
     
     return () => clearInterval(healthTimer);

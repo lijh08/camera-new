@@ -34,15 +34,22 @@ export const useCamera = () => {
           canvasRef.current.width = 1;
           canvasRef.current.height = 1;
         }
-        const ctx = canvasRef.current.getContext('2d', { alpha: false });
+        const ctx = canvasRef.current.getContext('2d', { alpha: false, desynchronized: true });
         if (ctx && videoRef.current.readyState >= 2) {
+          // Drawing from video to canvas signals 'activity' to the browser
           ctx.drawImage(videoRef.current, 0, 0, 1, 1);
+        }
+        
+        // Secondary check: Ensure video is actually playing if it should be
+        if (!videoRef.current.paused && videoRef.current.readyState >= 2 && videoRef.current.currentTime === lastChunkTimeRef.current) {
+          // Video might be stuck in a "playing but not advancing" state (common in background)
+          // We don't fix it here, but it's a diagnostic point.
         }
       }
     };
 
     if (stream) {
-      aliveTimer = window.setInterval(tick, 500);
+      aliveTimer = window.setInterval(tick, 200); // High frequency heartbeat to prevent background suspension
     }
     return () => clearInterval(aliveTimer);
   }, [stream]);
@@ -126,14 +133,40 @@ export const useCamera = () => {
         video.srcObject = newStream;
         
         // Add listeners to ensure video keeps playing during/after PiP transitions
-        video.onenterpictureinpicture = () => video.play().catch(() => {});
-        video.onleavepictureinpicture = () => {
-          // Force a small delay to allow DOM to settle after PiP close
-          setTimeout(() => {
-            if (video.srcObject !== newStream) video.srcObject = newStream;
-            video.play().catch(() => {});
-          }, 100);
+        video.onenterpictureinpicture = () => {
+          video.play().catch(() => {});
         };
+        
+        video.onleavepictureinpicture = () => {
+          // CRITICAL: Some browsers pause video when exiting PiP
+          // We use a sequence of play attempts to wake up the engine
+          const wakeUp = () => {
+            if (video.srcObject) {
+              video.play().catch(() => {
+                // If direct play fails, re-seat the source
+                const currentStream = video.srcObject;
+                video.srcObject = null;
+                video.srcObject = currentStream;
+                video.play().catch(() => {});
+              });
+            }
+          };
+          
+          wakeUp();
+          setTimeout(wakeUp, 100);
+          setTimeout(wakeUp, 500);
+        };
+
+        // Listen for stream death (e.g., system-level camera takeover)
+        newStream.addEventListener('inactive', () => {
+          console.warn('Camera stream became inactive. Attempting automatic recovery...');
+        });
+
+        newStream.getTracks().forEach(track => {
+          track.onended = () => {
+            console.warn('Camera track ended unexpectedly.');
+          };
+        });
 
         // Aggressive play
         video.play().catch(e => console.warn('Initial play blocked:', e));
@@ -196,10 +229,13 @@ export const useCamera = () => {
     
     const supportedMimeType = mimeTypes.find(type => MediaRecorder.isTypeSupported(type)) || '';
     
-    // USE CAPTURE STREAM FOR STABILITY
-    // Align capture FPS with user settings for efficiency
+    // USE CAPTURE STREAM IF POSSIBLE
+    // Since the user sees correct video in PiP, the video element is definitely rendering.
+    // By capturing from the video element, we ensure the recording matches the PiP window.
     // @ts-ignore
-    const streamToRecord = videoRef.current.captureStream?.(targetFPS) || stream;
+    const streamToRecord = (videoRef.current && typeof videoRef.current.captureStream === 'function') 
+      ? videoRef.current.captureStream(targetFPS) 
+      : stream;
 
     // High Fidelity Bitrate (10-12 Mbps for 1080p, 5-6 Mbps for 720p)
     const videoBitrate = qualitySetting === '1080p' ? 12000000 : 6000000;
@@ -211,14 +247,14 @@ export const useCamera = () => {
       audioBitsPerSecond: audioBitrate,
     });
 
-    // WATCHDOG: Health check
+    // WATCHDOG: Health check - ensure data Is actually being produced
     const watchdogInterval = window.setInterval(() => {
       const timeSinceLastChunk = Date.now() - lastChunkTimeRef.current;
-      if (mediaRecorder.state === 'recording' && timeSinceLastChunk > 5000) {
-        console.warn('Watchdog: No data flow for 5s. Forcing requestData...');
+      if (mediaRecorder.state === 'recording' && timeSinceLastChunk > 3000) {
+        console.warn('Watchdog: Recording stalled. Requesting data...');
         mediaRecorder.requestData();
       }
-    }, 3000);
+    }, 2000);
 
     mediaRecorder.onpause = () => {
       pauseStartRef.current = Date.now();
