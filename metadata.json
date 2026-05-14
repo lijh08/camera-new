@@ -1,0 +1,6 @@
+{
+  "name": "CamPiP Stealth",
+  "description": "专属特战级潜行记录工具。支持画中画实时监控、后台静默录制及军用级伪装模式，确保在任何极小空间或背景任务中保持视野与音频的绝对采集。",
+  "requestFramePermissions": ["camera", "microphone"],
+  "majorCapabilities": ["video_recording", "picture_in_picture"]
+}

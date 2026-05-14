@@ -1,0 +1,36 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  --color-ios-blue: #007AFF;
+  --color-ios-red: #FF3B30;
+  --color-ios-green: #34C759;
+  --color-ios-gray: #8E8E93;
+  --color-ios-black: #000000;
+  --color-ios-white: #FFFFFF;
+
+  --animate-scan-line: scan-line 2s linear infinite;
+
+  @keyframes scan-line {
+    0% { top: 0%; opacity: 0; }
+    5% { opacity: 1; }
+    95% { opacity: 1; }
+    100% { top: 100%; opacity: 0; }
+  }
+}
+
+@layer base {
+  body {
+    @apply bg-zinc-950 text-white font-sans antialiased overflow-hidden;
+  }
+}
+
+.ios-blur {
+  background: rgba(20, 20, 20, 0.7);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
