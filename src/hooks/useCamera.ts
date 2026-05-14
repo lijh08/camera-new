@@ -20,6 +20,7 @@ export const useCamera = () => {
   const startTimeRef = useRef<number>(0);
   const pausedTimeRef = useRef<number>(0);
   const pauseStartRef = useRef<number>(0);
+  const lastChunkTimeRef = useRef<number>(0);
 
   const startCamera = useCallback(async (mode?: 'user' | 'environment', quality?: '720p' | '1080p', frameRate?: number) => {
     const activeMode = mode || facingMode;
@@ -92,9 +93,21 @@ export const useCamera = () => {
       setFacingMode(activeMode);
       
       if (videoRef.current) {
-        videoRef.current.srcObject = newStream;
+        const video = videoRef.current;
+        video.srcObject = newStream;
+        
+        // Add listeners to ensure video keeps playing during/after PiP transitions
+        video.onenterpictureinpicture = () => video.play().catch(() => {});
+        video.onleavepictureinpicture = () => {
+          // Force a small delay to allow DOM to settle after PiP close
+          setTimeout(() => {
+            if (video.srcObject !== newStream) video.srcObject = newStream;
+            video.play().catch(() => {});
+          }, 100);
+        };
+
         // Aggressive play
-        videoRef.current.play().catch(e => console.warn('Initial play blocked:', e));
+        video.play().catch(e => console.warn('Initial play blocked:', e));
       }
       return newStream;
     } catch (err) {
@@ -180,24 +193,48 @@ export const useCamera = () => {
 
     mediaRecorder.ondataavailable = (e) => {
       if (e.data.size > 0) {
+        // Sync start time to the VERY FIRST actual data chunk to avoid leading gaps
+        if (chunksRef.current.length === 0) {
+          startTimeRef.current = Date.now();
+        }
+        
+        lastChunkTimeRef.current = Date.now();
         chunksRef.current.push(e.data);
       }
     };
 
     mediaRecorder.onstop = () => {
       setRecorderState('inactive');
+      
+      // If no data was captured, don't save a bogus recording
+      if (chunksRef.current.length === 0) {
+        console.warn('Recording stopped with no data chunks. Discarding.');
+        return;
+      }
+
       const blob = new Blob(chunksRef.current, { type: supportedMimeType });
       const url = URL.createObjectURL(blob);
       
-      // Calculate real duration excluding pause time
       const now = Date.now();
+      
+      // CRITICAL FIX: If startTimeRef was never set (no data), use a safe fallback
+      // 1988 hours usually comes from Date(0)... we must prevent this.
+      const hasData = chunksRef.current.length > 0;
+      const effectiveStart = (startTimeRef.current > 0 && hasData) ? startTimeRef.current : now;
+      
       let finalPausedTime = pausedTimeRef.current;
       if (pauseStartRef.current > 0) {
         finalPausedTime += (now - pauseStartRef.current);
       }
       
-      const rawDuration = now - startTimeRef.current - finalPausedTime;
-      // Sanity check: duration cannot be negative or absurdly long (e.g., > 24 hours for a single clip)
+      let rawDuration = now - effectiveStart - finalPausedTime;
+      
+      // If the math results in something crazy, or no chunks exist
+      if (!hasData || rawDuration < 0 || rawDuration > 86400000) {
+        // Fallback to estimation based on chunks (we request data every 1000ms)
+        rawDuration = chunksRef.current.length * 1000;
+      }
+
       const duration = Math.max(0, Math.min(rawDuration, 86400000));
       
       const newVideo: SavedVideo = {
@@ -212,9 +249,10 @@ export const useCamera = () => {
     };
 
     mediaRecorderRef.current = mediaRecorder;
-    startTimeRef.current = Date.now();
+    startTimeRef.current = Date.now(); 
     pausedTimeRef.current = 0;
     pauseStartRef.current = 0;
+    lastChunkTimeRef.current = Date.now();
     // Request data every 1000ms to keep the recording process active
     mediaRecorder.start(1000);
     setIsRecording(true);

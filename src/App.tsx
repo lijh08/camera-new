@@ -122,7 +122,8 @@ export default function App() {
       show: '显示',
       pip: '画中画',
       fullscreen: '全屏模式',
-      addHome: '添加到主屏幕以获得全屏体验',
+      addHome: '请【在新窗口打开】或【添加至主屏】使用全屏/画中画',
+      pipBlocked: '当前环境禁用了画中画，请点击屏幕右上方“在新窗口打开”图标',
       fix: '一键修复',
       healthNominal: '系统正常',
       healthWarning: '系统异常',
@@ -168,7 +169,8 @@ export default function App() {
       show: 'Show',
       pip: 'PiP',
       fullscreen: 'Fullscreen',
-      addHome: 'Add to Home Screen for App mode',
+      addHome: 'Please [Open in New Tab] or [Add to Home] for full experience',
+      pipBlocked: 'PiP is disabled in this view. Please click "Open in New Tab" at the top right.',
       fix: 'Fix System',
       healthNominal: 'Healthy',
       healthWarning: 'Warning',
@@ -265,10 +267,26 @@ export default function App() {
     localStorage.setItem('cam_pip_disguise', disguiseMode);
     
     // Auto-restart camera to apply changes if initialized
-    if (isInitialized && !isRecording) {
-      handleStart().catch(() => {});
+    // Wrap in a defensive check to prevent double-init on desktop mode
+    if (isInitialized && !isRecording && stream && activeTab === 'record') {
+      const currentQuality = localStorage.getItem('cam_pip_quality');
+      const currentFPS = localStorage.getItem('cam_pip_fps');
+      
+      // Only restart if values actually changed to avoid infinite loop
+      if (currentQuality !== quality || currentFPS !== frameRate.toString()) {
+        handleStart().catch(() => {});
+      }
     }
-  }, [quality, frameRate, disguiseMode]);
+  }, [quality, frameRate, disguiseMode, isInitialized, isRecording, stream, activeTab]);
+
+  useEffect(() => {
+    if (activeTab === 'record' && isInitialized && videoRef.current) {
+      const video = videoRef.current;
+      if (video.paused) {
+        video.play().catch(() => {});
+      }
+    }
+  }, [activeTab, isInitialized, videoRef]);
 
   const handleStart = async (mode?: 'user' | 'environment') => {
     try {
@@ -306,13 +324,19 @@ export default function App() {
 
   const deleteVideo = (id: string) => setRecordings(prev => prev.filter(v => v.id !== id));
   const facingMode = stream?.getVideoTracks()[0]?.getSettings()?.facingMode || 'user';
-  const formatTime = (seconds: number) => `${Math.floor(seconds / 60).toString().padStart(2, '0')}:${(seconds % 60).toString().padStart(2, '0')}`;
+  const formatTime = (seconds: number) => {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
+    if (h > 0) return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  };
 
   useEffect(() => {
     let interval: number;
     if (isRecording) {
       interval = window.setInterval(() => {
-        if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording' && !document.hidden) {
           setRecordingTime(prev => prev + 1);
         }
       }, 1000);
@@ -333,6 +357,14 @@ export default function App() {
     } else if (document.exitFullscreen) {
       document.exitFullscreen();
     }
+  };
+
+  const togglePiPWithCheck = async () => {
+    if (!document.pictureInPictureEnabled) {
+      alert(t.pipBlocked);
+      return;
+    }
+    await togglePiP();
   };
 
   return (
@@ -366,7 +398,7 @@ export default function App() {
           {!isDisguised && activeTab === 'record' && (
             <div className="absolute top-6 right-6 flex gap-2">
               <button onClick={() => switchCamera(quality, frameRate)} className="p-3 bg-black/50 rounded-2xl text-white"><RefreshCw className="w-5 h-5" /></button>
-              <button onClick={togglePiP} className="p-3 bg-black/50 rounded-2xl text-white"><Minimize2 className="w-5 h-5" /></button>
+              <button onClick={togglePiPWithCheck} className="p-3 bg-black/50 rounded-2xl text-white"><Minimize2 className="w-5 h-5" /></button>
             </div>
           )}
         </div>
