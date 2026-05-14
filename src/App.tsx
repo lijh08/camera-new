@@ -263,6 +263,11 @@ export default function App() {
     localStorage.setItem('cam_pip_quality', quality);
     localStorage.setItem('cam_pip_fps', frameRate.toString());
     localStorage.setItem('cam_pip_disguise', disguiseMode);
+    
+    // Auto-restart camera to apply changes if initialized
+    if (isInitialized && !isRecording) {
+      handleStart().catch(() => {});
+    }
   }, [quality, frameRate, disguiseMode]);
 
   const handleStart = async (mode?: 'user' | 'environment') => {
@@ -348,8 +353,8 @@ export default function App() {
       </AnimatePresence>
 
       <div className="flex-1 flex flex-col overflow-y-auto px-4 gap-6 scrollbar-hide overscroll-contain">
-        <div className={`transition-all duration-500 shrink-0 ${!isDisguised && activeTab === 'record' && isInitialized ? 'relative w-full rounded-[3rem] shadow-2xl bg-zinc-900 overflow-hidden min-h-[200px]' : 'fixed w-8 h-8 opacity-0 pointer-events-none'}`}>
-          <video ref={videoRef} autoPlay muted playsInline className={`w-full h-auto max-h-[60vh] object-contain ${facingMode === 'user' ? 'scale-x-[-1]' : ''}`} />
+        <div className={`transition-all duration-500 shrink-0 ${!isDisguised && activeTab === 'record' && isInitialized ? 'relative w-full rounded-[3rem] shadow-2xl bg-zinc-900 overflow-hidden' : 'fixed w-8 h-8 opacity-0 pointer-events-none'}`}>
+          <video ref={videoRef} autoPlay muted playsInline className={`w-full h-auto object-cover min-h-[40vh] ${facingMode === 'user' ? 'scale-x-[-1]' : ''}`} />
           {isRecording && !isDisguised && (
             <div className="absolute top-6 left-6 flex items-center gap-2 bg-black/50 px-3 py-1 rounded-full">
               <div className={`w-2 h-2 rounded-full ${recorderState === 'paused' ? 'bg-yellow-500' : 'bg-ios-red animate-pulse'}`} />

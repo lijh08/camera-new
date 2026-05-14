@@ -28,8 +28,19 @@ export const useCamera = () => {
     const targetFPS = frameRate || 30;
     
     if (stream) {
-      stream.getTracks().forEach(track => track.stop());
+      stream.getTracks().forEach(track => {
+        track.stop();
+        track.enabled = false;
+      });
     }
+    setStream(null);
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+      videoRef.current.load(); // Force release
+    }
+    
+    // Give hardware a moment to settle
+    await new Promise(resolve => setTimeout(resolve, 200));
 
     // Ensure both camera and microphone are requested as per user's strict requirement
     try {
@@ -110,7 +121,7 @@ export const useCamera = () => {
     
     const nextMode = facingMode === 'user' ? 'environment' : 'user';
     
-    // Hard stop all tracks
+    // Kill existing completely
     if (stream) {
       stream.getTracks().forEach(t => {
         t.stop();
@@ -118,10 +129,13 @@ export const useCamera = () => {
       });
     }
     setStream(null);
-    if (videoRef.current) videoRef.current.srcObject = null;
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+      videoRef.current.load();
+    }
 
     // Small delay to let hardware release
-    await new Promise(r => setTimeout(r, 300));
+    await new Promise(r => setTimeout(r, 400));
     
     await startCamera(nextMode, qualitySetting, fpsSetting);
   }, [facingMode, isRecording, startCamera, stream]);
@@ -143,8 +157,8 @@ export const useCamera = () => {
     // Use the direct MediaStream to avoid "Screen Recording" prompts caused by captureStream
     const streamToRecord = stream;
 
-    // Optimal Bitrate
-    const videoBitrate = qualitySetting === '1080p' ? 8000000 : 4000000;
+    // High Fidelity Bitrate (10-12 Mbps for 1080p, 5-6 Mbps for 720p)
+    const videoBitrate = qualitySetting === '1080p' ? 12000000 : 6000000;
 
     const mediaRecorder = new MediaRecorder(streamToRecord, {
       mimeType: supportedMimeType,
