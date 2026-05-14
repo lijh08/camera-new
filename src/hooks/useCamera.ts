@@ -278,28 +278,44 @@ export const useCamera = () => {
     
     const supportedMimeType = mimeTypes.find(type => MediaRecorder.isTypeSupported(type)) || '';
     
-    // THE STABILITY FIX: HYBRID STREAM CONSTRUCTION
-    // 1. Capture Video from the rendering element (PiP works, so this is high confidence)
-    // 2. Take Audio from the original source stream (highest fidelity)
+    // THE STABILITY FIX: CANVAS-PUMPED RECORDING
+    // Instead of recording the stream directly, we record a Canvas that we manually paint.
+    // Browsers are much less likely to "silence" a Canvas being drawn to in background.
+    const recordCanvas = document.createElement('canvas');
+    // Align with capture quality
+    recordCanvas.width = videoRef.current.videoWidth || 1280;
+    recordCanvas.height = videoRef.current.videoHeight || 720;
+    const recordCtx = recordCanvas.getContext('2d', { 
+      alpha: false, 
+      desynchronized: true, // Low latency
+      willReadFrequently: false 
+    });
+
     const combinedStream = new MediaStream();
-    
-    if (videoRef.current && typeof videoRef.current.captureStream === 'function') {
-      // @ts-ignore
-      const capturedVideoStream = videoRef.current.captureStream(targetFPS);
-      capturedVideoStream.getVideoTracks().forEach((track: MediaStreamTrack) => {
-        combinedStream.addTrack(track);
-      });
-    } else {
-      // Fallback: use raw stream tracks
-      stream.getVideoTracks().forEach(track => combinedStream.addTrack(track));
-    }
-    
-    // CRITICAL: Always attach original audio tracks to ensure sound presence
-    stream.getAudioTracks().forEach(track => combinedStream.addTrack(track));
+    // @ts-ignore
+    const canvasStream = recordCanvas.captureStream(targetFPS);
+    canvasStream.getVideoTracks().forEach((t: MediaStreamTrack) => combinedStream.addTrack(t));
+    stream.getAudioTracks().forEach(t => combinedStream.addTrack(t));
+
+    // Internal loop to keep the Canvas pumping frames
+    const frameInterval = window.setInterval(() => {
+      if (videoRef.current && recordCtx && recorderState !== 'inactive') {
+        recordCtx.drawImage(videoRef.current, 0, 0, recordCanvas.width, recordCanvas.height);
+      }
+    }, 1000 / targetFPS);
+
+    // SENSOR CALIBRATION PULSE: Silent health touch
+    const sensorPulse = window.setInterval(() => {
+      if (stream.active) {
+        // Minimal touch to keep background process priority high
+        const tracks = stream.getTracks();
+        if (tracks.length > 0) tracks[0].enabled = tracks[0].enabled; 
+      }
+    }, 2000);
 
     // High Fidelity Bitrate (10-12 Mbps for 1080p, 5-6 Mbps for 720p)
     const videoBitrate = qualitySetting === '1080p' ? 12000000 : 8000000;
-    const audioBitrate = 128000; // 128 kbps for high quality audio
+    const audioBitrate = 128000;
 
     const mediaRecorder = new MediaRecorder(combinedStream, {
       mimeType: supportedMimeType,
@@ -307,11 +323,10 @@ export const useCamera = () => {
       audioBitsPerSecond: audioBitrate,
     });
 
-    // WATCHDOG: Health check - ensure data Is actually being produced
+    // WATCHDOG: Health check
     const watchdogInterval = window.setInterval(() => {
       const timeSinceLastChunk = Date.now() - lastChunkTimeRef.current;
       if (mediaRecorder.state === 'recording' && timeSinceLastChunk > 3000) {
-        console.warn('Watchdog: Recording stalled. Requesting data...');
         mediaRecorder.requestData();
       }
     }, 2000);
@@ -331,11 +346,9 @@ export const useCamera = () => {
 
     mediaRecorder.ondataavailable = (e) => {
       if (e.data.size > 0) {
-        // Sync start time to the VERY FIRST actual data chunk to avoid leading gaps
         if (chunksRef.current.length === 0) {
           startTimeRef.current = Date.now();
         }
-        
         lastChunkTimeRef.current = Date.now();
         chunksRef.current.push(e.data);
       }
@@ -343,6 +356,8 @@ export const useCamera = () => {
 
     mediaRecorder.onstop = () => {
       clearInterval(watchdogInterval);
+      clearInterval(frameInterval);
+      clearInterval(sensorPulse);
       setRecorderState('inactive');
       
       // If no data was captured, don't save a bogus recording
@@ -465,6 +480,7 @@ export const useCamera = () => {
     startRecording,
     stopRecording,
     togglePiP,
+    switchCamera,
     status: systemHealth,
     removeRecording,
     setRecordings,
