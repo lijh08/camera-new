@@ -38,6 +38,7 @@ export default function App() {
     stopRecording, 
     togglePiP,
     switchCamera,
+    status,
     removeRecording,
     mediaRecorderRef
   } = useCamera();
@@ -50,13 +51,23 @@ export default function App() {
   const [initError, setInitError] = useState<string | null>(null);
   const [lang, setLang] = useState<'en' | 'zh'>(() => (localStorage.getItem('cam_pip_lang') as 'en' | 'zh') || 'zh');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [systemHealth, setSystemHealth] = useState<'nominal' | 'warning' | 'error'>('nominal');
   const [isScanning, setIsScanning] = useState(false);
   const [disguiseMode, setDisguiseMode] = useState<'clock' | 'black'>(() => (localStorage.getItem('cam_pip_disguise') as 'clock' | 'black') || 'clock');
   const [quality, setQuality] = useState<'720p' | '1080p'>(() => (localStorage.getItem('cam_pip_quality') as '720p' | '1080p') || '720p');
   const [frameRate, setFrameRate] = useState<number>(() => Number(localStorage.getItem('cam_pip_fps')) || 30);
-  const lastTimeRef = useRef(0);
-  const frozenCountRef = useRef(0);
+
+  // Hard Reboot logic for critical status
+  useEffect(() => {
+    if (status === 'critical' && isInitialized) {
+      console.log('App: Critical health sensed. Initiating hardware reset...');
+      const wasRecording = isRecording;
+      handleStart().then(() => {
+        if (wasRecording) {
+          setTimeout(() => startRecording(quality), 1500);
+        }
+      });
+    }
+  }, [status, isInitialized]);
 
   useEffect(() => {
     const handleVisibilityChange = () => {
@@ -177,85 +188,10 @@ export default function App() {
     }
   }[lang];
 
-  useEffect(() => {
-    let healthTimer: number;
-    const checkHealth = async () => {
-      if (isInitialized && stream && activeTab === 'record') {
-        const video = videoRef.current;
-        if (!stream.active) {
-          setSystemHealth('error');
-          if (frozenCountRef.current === 0) {
-            handleStart().catch(() => {});
-          }
-          frozenCountRef.current++;
-        } else if (video) {
-          const isActuallyPaused = video.paused || video.readyState < 2;
-          const isFrozen = !video.paused && video.currentTime === lastTimeRef.current && video.readyState >= 1;
-          
-          if (isFrozen) {
-            frozenCountRef.current++;
-          } else {
-            frozenCountRef.current = 0;
-            lastTimeRef.current = video.currentTime;
-          }
+  // The checkHealth loop is now internal to useCamera
+  // We just sync UI translation
+  const currentHealth = status === 'critical' ? 'error' : (status === 'warning' ? 'warning' : 'nominal');
 
-          // Aggressive recovery
-          if (isFrozen && (frozenCountRef.current === 2 || document.pictureInPictureElement)) {
-            // Jiggle the currentTime to shake off browser-level pauses
-            video.currentTime = video.currentTime;
-            video.play().catch(() => {});
-            if (isRecording && mediaRecorderRef.current) {
-              try { mediaRecorderRef.current.requestData(); } catch (e) {}
-            }
-          } 
-          
-          // Moderate Stage Recovery: Source re-assignment
-          if (isFrozen && (frozenCountRef.current === 3 || (isRecording && frozenCountRef.current === 2))) {
-            const currentStream = video.srcObject;
-            video.srcObject = null;
-            setTimeout(() => {
-              if (currentStream && videoRef.current) {
-                videoRef.current.srcObject = currentStream;
-                videoRef.current.play().catch(() => {});
-              }
-            }, 50);
-          } 
-          // Hard Stage Recovery: Full restart
-          else if (isFrozen && (frozenCountRef.current === 8 || (isRecording && frozenCountRef.current === 6))) {
-            console.log('Priority Recovery Triggered: Hard restart...');
-            const wasRecording = isRecording;
-            if (wasRecording) {
-              // Attempt to save what we have before crashing/restarting
-              stopRecording();
-            }
-            await handleStart().catch(() => {});
-            if (wasRecording) {
-              // Delay resume to let stream stabilize
-              setTimeout(() => startRecording(quality), 1500);
-            }
-            frozenCountRef.current = 0;
-          }
-
-          if (isActuallyPaused || frozenCountRef.current > 1) {
-            setSystemHealth('warning');
-          } else {
-            setSystemHealth('nominal');
-          }
-        }
-      } else if (isInitialized && !stream) {
-        setSystemHealth('error');
-      } else {
-        setSystemHealth('nominal');
-        frozenCountRef.current = 0;
-      }
-    };
-    
-    if (isInitialized) {
-      healthTimer = window.setInterval(checkHealth, 1000); // 1s interval for faster response
-    }
-    
-    return () => clearInterval(healthTimer);
-  }, [isInitialized, stream, isRecording, activeTab, quality]);
 
   useEffect(() => {
     localStorage.setItem('cam_pip_quality', quality);
@@ -369,7 +305,15 @@ export default function App() {
           <motion.header className="px-6 pt-[calc(env(safe-area-inset-top)+1rem)] pb-6 flex justify-between items-center z-20 shrink-0">
             <div>
               <h2 className="text-zinc-500 text-xs font-bold uppercase tracking-widest leading-none mb-1">{t.stealthOps}</h2>
-              <h1 className="text-2xl font-bold">CamPiP <span className="text-ios-blue">{t.pro}</span></h1>
+              <div className="flex items-center gap-2">
+                <h1 className="text-2xl font-bold">CamPiP</h1>
+                <div className="flex items-center gap-1.5 px-2 py-0.5 bg-zinc-900 rounded-full border border-white/5">
+                  <div className={`w-1.5 h-1.5 rounded-full ${currentHealth === 'nominal' ? 'bg-ios-green' : (currentHealth === 'warning' ? 'bg-yellow-500' : 'bg-ios-red')}`} />
+                  <span className="text-[8px] font-black uppercase tracking-tighter text-zinc-400">
+                    {currentHealth === 'nominal' ? t.healthNominal : (currentHealth === 'warning' ? t.healthWarning : 'Critical')}
+                  </span>
+                </div>
+              </div>
             </div>
             <div className="flex gap-4">
               <button onClick={() => setIsDisguised(true)} className="p-3 bg-zinc-900 rounded-2xl text-zinc-400"><EyeOff className="w-5 h-5" /></button>
@@ -579,7 +523,12 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      <div className="fixed opacity-0 pointer-events-none z-[-100] invisible" />
+      {/* Technical persistent video element - ensuring it is "visible" for the compositor */}
+      <div className="fixed top-0 left-0 w-1 h-1 bg-white opacity-[0.01] pointer-events-none z-[-1000] overflow-hidden">
+        <div className="w-full h-full bg-white" />
+      </div>
+
+
     </div>
   );
 }

@@ -15,19 +15,22 @@ export const useCamera = () => {
   const [recordings, setRecordings] = useState<SavedVideo[]>([]);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const [targetFPS, setTargetFPS] = useState(30);
+  const [systemHealth, setSystemHealth] = useState<'nominal' | 'warning' | 'critical'>('nominal');
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const frozenCountRef = useRef<number>(0);
+  const lastTimeRef = useRef<number>(0);
   const startTimeRef = useRef<number>(0);
   const pausedTimeRef = useRef<number>(0);
   const pauseStartRef = useRef<number>(0);
   const lastChunkTimeRef = useRef<number>(0);
 
-  // Global "Always-On" heartbeat to maintain PiP activity even when NOT recording
+  // GLOBAL PUMP: Force the browser to keep rendering nodes active
   useEffect(() => {
-    let aliveTimer: number;
-    const tick = () => {
+    let pumpTimer: number;
+    const pump = () => {
       if (stream && videoRef.current) {
         if (!canvasRef.current) {
           canvasRef.current = document.createElement('canvas');
@@ -36,23 +39,68 @@ export const useCamera = () => {
         }
         const ctx = canvasRef.current.getContext('2d', { alpha: false, desynchronized: true });
         if (ctx && videoRef.current.readyState >= 2) {
-          // Drawing from video to canvas signals 'activity' to the browser
+          // Drawing forces the frame buffer to stay decoded even in background
           ctx.drawImage(videoRef.current, 0, 0, 1, 1);
-        }
-        
-        // Secondary check: Ensure video is actually playing if it should be
-        if (!videoRef.current.paused && videoRef.current.readyState >= 2 && videoRef.current.currentTime === lastChunkTimeRef.current) {
-          // Video might be stuck in a "playing but not advancing" state (common in background)
-          // We don't fix it here, but it's a diagnostic point.
         }
       }
     };
 
     if (stream) {
-      aliveTimer = window.setInterval(tick, 200); // High frequency heartbeat to prevent background suspension
+      pumpTimer = window.setInterval(pump, 33); // 30fps high-priority heartbeat
     }
-    return () => clearInterval(aliveTimer);
+    return () => clearInterval(pumpTimer);
   }, [stream]);
+
+  // TIERED RECOVERY: Automated health watchdog
+  useEffect(() => {
+    let watchdog: number;
+    const check = async () => {
+      if (recorderState === 'recording' && videoRef.current && mediaRecorderRef.current) {
+        const video = videoRef.current;
+        const currentTime = video.currentTime;
+        
+        // If time is not advancing
+        if (currentTime === lastTimeRef.current && !video.paused) {
+          frozenCountRef.current += 1;
+          console.warn(`[Tiered Recovery] Frozen detected: ${frozenCountRef.current}/30s`);
+          
+          // L1: Request data every 2s of freeze
+          if (frozenCountRef.current % 10 === 0) {
+            console.log('L1 Recovery: Forcing encoder flush...');
+            mediaRecorderRef.current.requestData();
+          }
+          
+          // L2: srcObject Flash (5s freeze)
+          if (frozenCountRef.current === 25) {
+            console.log('L2 Recovery: Re-seating srcObject...');
+            const currentStream = video.srcObject;
+            video.srcObject = null;
+            video.srcObject = currentStream;
+            video.play().catch(() => {});
+          }
+
+          // L3: Hard Reboot (10s freeze)
+          if (frozenCountRef.current >= 50) {
+            console.error('L3 Recovery: HARD RESTART TRIGGERED');
+            // Force a recording stop and camera reset
+            setSystemHealth('critical');
+            if (isRecording) {
+              mediaRecorderRef.current.stop();
+            }
+          }
+        } else {
+          frozenCountRef.current = 0;
+          setSystemHealth('nominal');
+        }
+        lastTimeRef.current = currentTime;
+      }
+    };
+
+    if (recorderState === 'recording') {
+      watchdog = window.setInterval(check, 200);
+    }
+    return () => clearInterval(watchdog);
+  }, [recorderState]);
 
   const startCamera = useCallback(async (mode?: 'user' | 'environment', quality?: '720p' | '1080p', frameRate?: number) => {
     const activeMode = mode || facingMode;
@@ -76,8 +124,8 @@ export const useCamera = () => {
     // Give hardware a moment to settle
     await new Promise(resolve => setTimeout(resolve, 200));
 
-    // Ensure both camera and microphone are requested as per user's strict requirement
     try {
+      setSystemHealth('nominal');
       const constraints: MediaStreamConstraints = {
         video: { 
           facingMode: activeMode, 
@@ -417,7 +465,7 @@ export const useCamera = () => {
     startRecording,
     stopRecording,
     togglePiP,
-    switchCamera,
+    status: systemHealth,
     removeRecording,
     setRecordings,
     mediaRecorderRef
