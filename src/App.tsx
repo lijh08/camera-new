@@ -70,17 +70,33 @@ export default function App() {
   }, [status, isInitialized]);
 
   useEffect(() => {
+    let visibilityCheckTimer: number;
     const handleVisibilityChange = () => {
       if (document.hidden) {
         if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
           mediaRecorderRef.current.pause();
         }
+        window.clearTimeout(visibilityCheckTimer);
       } else {
         if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'paused') {
           mediaRecorderRef.current.resume();
         }
         // Force video play on return
         if (videoRef.current) videoRef.current.play().catch(() => {});
+
+        // SECURE AUTO-CALIBRATION: Check camera & mic health 2 seconds after return
+        window.clearTimeout(visibilityCheckTimer);
+        visibilityCheckTimer = window.setTimeout(() => {
+          if (isInitialized) {
+            const hasVideo = stream?.getVideoTracks().some(t => t.readyState === 'live' && t.enabled);
+            const hasAudio = stream?.getAudioTracks().some(t => t.readyState === 'live' && t.enabled);
+            
+            if (!stream || !stream.active || !hasVideo || !hasAudio) {
+              console.log('App: Returning to site - System resources compromised (Cam/Mic). Auto-recovering...');
+              handleStart().catch(() => {});
+            }
+          }
+        }, 2000);
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -88,8 +104,9 @@ export default function App() {
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('pageshow', handleVisibilityChange);
+      window.clearTimeout(visibilityCheckTimer);
     };
-  }, [mediaRecorderRef]);
+  }, [mediaRecorderRef, isInitialized, stream]);
 
   const t = {
     zh: {
@@ -473,15 +490,33 @@ export default function App() {
 
       <AnimatePresence>
         {isDisguised && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black z-[500] flex flex-col items-center justify-center" onDoubleClick={() => setIsDisguised(false)}>
+          <motion.div 
+            initial={{ opacity: 0 }} 
+            animate={{ opacity: 1 }} 
+            exit={{ opacity: 0 }} 
+            className="fixed inset-0 bg-black z-[500] flex flex-col items-center justify-center cursor-none" 
+            onDoubleClick={() => setIsDisguised(false)}
+          >
             {disguiseMode === 'clock' ? (
               <div className="flex flex-col items-center text-zinc-400 gap-4">
                 <Clock className="w-12 h-12 opacity-20 animate-pulse" />
                 <div className="text-6xl font-mono font-bold text-white tracking-widest">{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
                 <div className="text-[10px] uppercase tracking-widest opacity-30">{t.monitoring}</div>
               </div>
-            ) : <div className="w-1 h-1 bg-zinc-900 rounded-full opacity-5 animate-pulse" />}
-            <div className="fixed bottom-12 text-[10px] text-zinc-900/40 uppercase tracking-widest">{t.restore}</div>
+            ) : (
+              // Absolute blackout mode
+              <div className="w-full h-full bg-black shadow-[inset_0_0_100px_rgba(0,0,0,1)]" />
+            )}
+            
+            {/* Subtle, almost invisible hint that fades out */}
+            <motion.div 
+              initial={{ opacity: 0.4 }}
+              animate={{ opacity: 0 }}
+              transition={{ delay: 3, duration: 2 }}
+              className="fixed bottom-12 text-[10px] text-white/5 uppercase tracking-widest pointer-events-none"
+            >
+              {t.restore}
+            </motion.div>
           </motion.div>
         )}
       </AnimatePresence>

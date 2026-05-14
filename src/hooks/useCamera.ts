@@ -299,7 +299,12 @@ export const useCamera = () => {
 
     // Internal loop to keep the Canvas pumping frames
     const frameInterval = window.setInterval(() => {
-      if (videoRef.current && recordCtx && recorderState !== 'inactive') {
+      if (videoRef.current && recordCtx && videoRef.current.readyState >= 2) {
+        // Double check dimensions in case they changed
+        if (recordCanvas.width !== videoRef.current.videoWidth && videoRef.current.videoWidth > 0) {
+          recordCanvas.width = videoRef.current.videoWidth;
+          recordCanvas.height = videoRef.current.videoHeight;
+        }
         recordCtx.drawImage(videoRef.current, 0, 0, recordCanvas.width, recordCanvas.height);
       }
     }, 1000 / targetFPS);
