@@ -23,7 +23,7 @@ import {
   Minimize2,
   RefreshCw
 } from 'lucide-react';
-import { useCamera } from './hooks/useCamera';
+import { useCamera, type SavedVideo } from './hooks/useCamera';
 
 export default function App() {
   const { 
@@ -38,7 +38,7 @@ export default function App() {
     stopRecording, 
     togglePiP,
     switchCamera,
-    setRecordings,
+    removeRecording,
     mediaRecorderRef
   } = useCamera();
 
@@ -57,26 +57,6 @@ export default function App() {
   const [frameRate, setFrameRate] = useState<number>(() => Number(localStorage.getItem('cam_pip_fps')) || 30);
   const lastTimeRef = useRef(0);
   const frozenCountRef = useRef(0);
-  const keepAliveCanvasRef = useRef<HTMLCanvasElement | null>(null);
-
-  useEffect(() => {
-    let aliveTimer: number;
-    const tick = () => {
-      if (isInitialized && stream && videoRef.current && keepAliveCanvasRef.current) {
-        const video = videoRef.current;
-        const canvas = keepAliveCanvasRef.current;
-        const ctx = canvas.getContext('2d', { alpha: false });
-        if (ctx && video.readyState >= 2) {
-          ctx.drawImage(video, 0, 0, 1, 1);
-        }
-      }
-    };
-
-    if (isInitialized && stream) {
-      aliveTimer = window.setInterval(tick, 200);
-    }
-    return () => clearInterval(aliveTimer);
-  }, [isInitialized, stream]);
 
   useEffect(() => {
     const handleVisibilityChange = () => {
@@ -301,7 +281,7 @@ export default function App() {
     }
   };
 
-  const shareVideo = async (video: { url: string, id: string, mimeType: string }) => {
+  const shareVideo = async (video: SavedVideo) => {
     try {
       const response = await fetch(video.url);
       const blob = await response.blob();
@@ -314,7 +294,7 @@ export default function App() {
     }
   };
 
-  const downloadVideo = (video: { url: string, id: string, mimeType: string }) => {
+  const downloadVideo = (video: SavedVideo) => {
     const a = document.createElement('a');
     a.href = video.url;
     const extension = video.mimeType.includes('mp4') ? 'mp4' : 'webm';
@@ -322,7 +302,6 @@ export default function App() {
     a.click();
   };
 
-  const deleteVideo = (id: string) => setRecordings(prev => prev.filter(v => v.id !== id));
   const facingMode = stream?.getVideoTracks()[0]?.getSettings()?.facingMode || 'user';
   const formatTime = (seconds: number) => {
     const h = Math.floor(seconds / 3600);
@@ -461,7 +440,7 @@ export default function App() {
                         <div className="flex gap-2">
                           <button onClick={() => shareVideo(v)} className="flex-1 py-2 bg-ios-blue/10 text-ios-blue rounded-xl flex items-center justify-center"><Share2 className="w-4 h-4" /></button>
                           <button onClick={() => downloadVideo(v)} className="flex-1 py-2 bg-zinc-800 text-zinc-400 rounded-xl flex items-center justify-center"><Download className="w-4 h-4" /></button>
-                          <button onClick={() => deleteVideo(v.id)} className="flex-1 py-2 bg-ios-red/10 text-ios-red rounded-xl flex items-center justify-center"><Trash2 className="w-4 h-4" /></button>
+                          <button onClick={() => removeRecording(v.id)} className="flex-1 py-2 bg-ios-red/10 text-ios-red rounded-xl flex items-center justify-center"><Trash2 className="w-4 h-4" /></button>
                         </div>
                       </div>
                     </div>
@@ -584,7 +563,7 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      <div className="fixed opacity-0 pointer-events-none z-[-100]"><canvas ref={keepAliveCanvasRef} width={1} height={1} /></div>
+      <div className="fixed opacity-0 pointer-events-none z-[-100] invisible" />
     </div>
   );
 }

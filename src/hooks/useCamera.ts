@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 
 export interface SavedVideo {
   id: string;
@@ -14,19 +14,45 @@ export const useCamera = () => {
   const [recorderState, setRecorderState] = useState<'inactive' | 'recording' | 'paused'>('inactive');
   const [recordings, setRecordings] = useState<SavedVideo[]>([]);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
+  const [targetFPS, setTargetFPS] = useState(30);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const startTimeRef = useRef<number>(0);
   const pausedTimeRef = useRef<number>(0);
   const pauseStartRef = useRef<number>(0);
   const lastChunkTimeRef = useRef<number>(0);
 
+  // Global "Always-On" heartbeat to maintain PiP activity even when NOT recording
+  useEffect(() => {
+    let aliveTimer: number;
+    const tick = () => {
+      if (stream && videoRef.current) {
+        if (!canvasRef.current) {
+          canvasRef.current = document.createElement('canvas');
+          canvasRef.current.width = 1;
+          canvasRef.current.height = 1;
+        }
+        const ctx = canvasRef.current.getContext('2d', { alpha: false });
+        if (ctx && videoRef.current.readyState >= 2) {
+          ctx.drawImage(videoRef.current, 0, 0, 1, 1);
+        }
+      }
+    };
+
+    if (stream) {
+      aliveTimer = window.setInterval(tick, 500);
+    }
+    return () => clearInterval(aliveTimer);
+  }, [stream]);
+
   const startCamera = useCallback(async (mode?: 'user' | 'environment', quality?: '720p' | '1080p', frameRate?: number) => {
     const activeMode = mode || facingMode;
+    const currentFPS = frameRate || 30;
+    setTargetFPS(currentFPS);
     const targetWidth = quality === '1080p' ? 1920 : 1280;
     const targetHeight = quality === '1080p' ? 1080 : 720;
-    const targetFPS = frameRate || 30;
     
     if (stream) {
       stream.getTracks().forEach(track => {
@@ -53,8 +79,11 @@ export const useCamera = () => {
           frameRate: { ideal: targetFPS }
         },
         audio: {
-          echoCancellation: true,
-          noiseSuppression: true
+          echoCancellation: { ideal: true },
+          noiseSuppression: { ideal: false }, // Disable aggressive suppression for better quality
+          autoGainControl: { ideal: true },
+          sampleRate: { ideal: 48000 },
+          channelCount: { ideal: 2 }
         },
       };
 
@@ -167,16 +196,29 @@ export const useCamera = () => {
     
     const supportedMimeType = mimeTypes.find(type => MediaRecorder.isTypeSupported(type)) || '';
     
-    // Use the direct MediaStream to avoid "Screen Recording" prompts caused by captureStream
-    const streamToRecord = stream;
+    // USE CAPTURE STREAM FOR STABILITY
+    // Align capture FPS with user settings for efficiency
+    // @ts-ignore
+    const streamToRecord = videoRef.current.captureStream?.(targetFPS) || stream;
 
     // High Fidelity Bitrate (10-12 Mbps for 1080p, 5-6 Mbps for 720p)
     const videoBitrate = qualitySetting === '1080p' ? 12000000 : 6000000;
+    const audioBitrate = 128000; // 128 kbps for high quality audio
 
     const mediaRecorder = new MediaRecorder(streamToRecord, {
       mimeType: supportedMimeType,
       videoBitsPerSecond: videoBitrate,
+      audioBitsPerSecond: audioBitrate,
     });
+
+    // WATCHDOG: Health check
+    const watchdogInterval = window.setInterval(() => {
+      const timeSinceLastChunk = Date.now() - lastChunkTimeRef.current;
+      if (mediaRecorder.state === 'recording' && timeSinceLastChunk > 5000) {
+        console.warn('Watchdog: No data flow for 5s. Forcing requestData...');
+        mediaRecorder.requestData();
+      }
+    }, 3000);
 
     mediaRecorder.onpause = () => {
       pauseStartRef.current = Date.now();
@@ -204,6 +246,7 @@ export const useCamera = () => {
     };
 
     mediaRecorder.onstop = () => {
+      clearInterval(watchdogInterval);
       setRecorderState('inactive');
       
       // If no data was captured, don't save a bogus recording
@@ -307,6 +350,14 @@ export const useCamera = () => {
     }
   }, []);
 
+  const removeRecording = useCallback((id: string) => {
+    setRecordings(prev => {
+      const video = prev.find(v => v.id === id);
+      if (video) URL.revokeObjectURL(video.url);
+      return prev.filter(v => v.id !== id);
+    });
+  }, []);
+
   return {
     stream,
     isRecording,
@@ -319,6 +370,7 @@ export const useCamera = () => {
     stopRecording,
     togglePiP,
     switchCamera,
+    removeRecording,
     setRecordings,
     mediaRecorderRef
   };
