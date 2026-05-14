@@ -311,9 +311,9 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      <div className="flex-1 flex flex-col overflow-hidden relative">
-        <div className={`transition-all duration-500 ${!isDisguised && activeTab === 'record' && isInitialized ? 'relative mx-4 flex-[1.5] rounded-[3rem] shadow-2xl bg-zinc-900' : 'fixed w-8 h-8 opacity-[0.01] pointer-events-none'}`}>
-          <video ref={videoRef} autoPlay muted playsInline className={`w-full h-full object-cover rounded-[3rem] ${facingMode === 'user' ? 'scale-x-[-1]' : ''}`} />
+      <div className="flex-1 flex flex-col overflow-y-auto px-4 gap-6 scrollbar-hide">
+        <div className={`transition-all duration-500 shrink-0 ${!isDisguised && activeTab === 'record' && isInitialized ? 'relative w-full aspect-video rounded-[3rem] shadow-2xl bg-zinc-900 overflow-hidden' : 'fixed w-8 h-8 opacity-0 pointer-events-none'}`}>
+          <video ref={videoRef} autoPlay muted playsInline className={`w-full h-full object-cover ${facingMode === 'user' ? 'scale-x-[-1]' : ''}`} />
           {isRecording && !isDisguised && <div className="absolute top-6 left-6 flex items-center gap-2 bg-black/50 px-3 py-1 rounded-full"><div className="w-2 h-2 bg-ios-red rounded-full animate-pulse" /><span className="text-xs font-mono">{formatTime(recordingTime)}</span></div>}
           {!isDisguised && activeTab === 'record' && (
             <div className="absolute top-6 right-6 flex gap-2">
@@ -323,28 +323,65 @@ export default function App() {
           )}
         </div>
 
-        <div className="flex-1 px-6 overflow-hidden flex flex-col">
+        <div className="flex-1 flex flex-col pb-10">
           <AnimatePresence mode="wait">
             {!isDisguised && isInitialized && (
               activeTab === 'record' ? (
-                <motion.div className="flex-1 flex flex-col mt-auto pb-10 items-center">
-                  <button onClick={() => isRecording ? stopRecording() : startRecording(quality)} className={`w-20 h-20 bg-white rounded-full flex items-center justify-center p-1`}>
-                    <div className="w-16 h-16 border-2 border-black rounded-full flex items-center justify-center">
-                      <div className={`transition-all ${isRecording ? 'w-8 h-8 rounded-lg' : 'w-12 h-12 rounded-full'} bg-ios-red`} />
+                <motion.div className="flex-1 flex flex-col items-center justify-center py-8 min-h-[300px]">
+                  <div className="relative group">
+                    <button 
+                      onClick={() => isRecording ? stopRecording() : startRecording(quality)} 
+                      className={`w-32 h-32 bg-white/10 rounded-full flex items-center justify-center p-2 active:scale-90 transition-transform`}
+                    >
+                      <div className="w-28 h-28 bg-white rounded-full flex items-center justify-center p-1">
+                        <div className="w-24 h-24 border-8 border-black/5 rounded-full flex items-center justify-center">
+                          <div className={`transition-all duration-500 ${isRecording ? 'w-12 h-12 rounded-2xl' : 'w-20 h-20 rounded-full'} bg-ios-red shadow-[inset_0_2px_10px_rgba(0,0,0,0.3)]`} />
+                        </div>
+                      </div>
+                    </button>
+                    {isRecording && (
+                      <motion.div 
+                        initial={{ scale: 0 }}
+                        animate={{ scale: 1 }}
+                        className="absolute -top-2 -right-2 w-8 h-8 bg-ios-red rounded-full flex items-center justify-center text-white font-bold text-xs border-4 border-black"
+                      >
+                        REC
+                      </motion.div>
+                    )}
+                  </div>
+                  <div className="mt-8 flex flex-col items-center gap-2">
+                    <p className="text-zinc-500 text-[10px] font-black uppercase tracking-[0.4em]">{isRecording ? 'Operational Trace Active' : t.ready}</p>
+                    <div className="flex gap-1">
+                      {[1, 2, 3].map(i => (
+                        <div key={i} className={`w-1 h-1 rounded-full bg-ios-blue ${isRecording ? 'animate-bounce' : 'opacity-20'}`} style={{ animationDelay: `${i * 0.15}s` }} />
+                      ))}
                     </div>
-                  </button>
+                  </div>
                 </motion.div>
               ) : (
-                <div className="flex-1 overflow-y-auto pt-6 space-y-4">
-                  {recordings.map(v => (
-                    <div key={v.id} className="bg-zinc-900 rounded-3xl p-4 flex gap-4">
-                      <video src={v.url} className="w-24 h-24 rounded-2xl object-cover bg-black" />
-                      <div className="flex-1 flex flex-col justify-center">
-                        <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">{new Date(v.timestamp).toLocaleDateString()}</div>
-                        <div className="text-sm font-bold">REC_{v.id}</div>
-                        <div className="flex gap-2 mt-2">
-                          <button onClick={() => shareVideo(v)} className="p-2 bg-zinc-800 rounded-xl text-ios-blue"><Share2 className="w-4 h-4" /></button>
-                          <button onClick={() => deleteVideo(v.id)} className="p-2 bg-zinc-800 rounded-xl text-ios-red"><Trash2 className="w-4 h-4" /></button>
+                <div className="flex-1 space-y-4">
+                  {recordings.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-20 text-zinc-700">
+                      <GalleryVertical className="w-12 h-12 mb-4 opacity-20" />
+                      <p className="text-xs uppercase font-bold tracking-widest">{t.noArchives}</p>
+                    </div>
+                  ) : recordings.map(v => (
+                    <div key={v.id} className="bg-zinc-900 rounded-[2.5rem] p-5 flex gap-5 border border-white/5">
+                      <div className="relative w-24 h-24 rounded-2xl overflow-hidden bg-black shrink-0">
+                        <video src={v.url} className="w-full h-full object-cover" />
+                        <div className="absolute bottom-1 right-1 bg-black/70 px-1.5 py-0.5 rounded text-[8px] font-mono text-white">
+                          {formatTime(Math.floor(v.duration / 1000))}
+                        </div>
+                      </div>
+                      <div className="flex-1 flex flex-col justify-center gap-2">
+                        <div>
+                          <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">{new Date(v.timestamp).toLocaleDateString()}</div>
+                          <div className="text-sm font-bold text-zinc-200">OPS_DATA_{v.id}</div>
+                        </div>
+                        <div className="flex gap-2">
+                          <button onClick={() => shareVideo(v)} className="flex-1 py-2 bg-ios-blue/10 text-ios-blue rounded-xl flex items-center justify-center"><Share2 className="w-4 h-4" /></button>
+                          <button onClick={() => downloadVideo(v)} className="flex-1 py-2 bg-zinc-800 text-zinc-400 rounded-xl flex items-center justify-center"><Download className="w-4 h-4" /></button>
+                          <button onClick={() => deleteVideo(v.id)} className="flex-1 py-2 bg-ios-red/10 text-ios-red rounded-xl flex items-center justify-center"><Trash2 className="w-4 h-4" /></button>
                         </div>
                       </div>
                     </div>
@@ -422,17 +459,42 @@ export default function App() {
 
       <AnimatePresence>
         {!isInitialized && (
-          <motion.div initial={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[600] bg-black flex flex-col items-center justify-center p-10 text-center">
-            <div className="w-24 h-24 bg-ios-blue rounded-[2.5rem] flex items-center justify-center mb-8 shadow-2xl"><Camera className="w-12 h-12 text-white" /></div>
-            <h1 className="text-3xl font-bold mb-4">{t.accessSecure}</h1>
-            <p className="text-zinc-500 mb-10 text-sm leading-relaxed">{t.requirement}</p>
-            <button onClick={() => handleStart()} className="w-full py-5 bg-white text-black rounded-[2rem] font-bold text-lg active:scale-95 transition-transform">{t.getStarted}</button>
-            <button onClick={() => setLang(lang === 'en' ? 'zh' : 'en')} className="mt-6 text-[10px] text-zinc-600 uppercase font-bold tracking-widest">Language: {lang === 'en' ? 'English' : '中文'}</button>
+          <motion.div 
+            initial={{ opacity: 1 }} 
+            exit={{ opacity: 0 }} 
+            className="fixed inset-0 z-[600] bg-black flex flex-col items-center justify-center p-10 text-center overflow-y-auto"
+          >
+            <div className="w-24 h-24 bg-ios-blue rounded-[2.5rem] flex items-center justify-center mb-8 shadow-2xl shrink-0">
+              <Camera className="w-12 h-12 text-white" />
+            </div>
+            
+            <h1 className="text-3xl font-bold mb-4">{initError === 'PERMISSION_DENIED' ? t.permissionDenied : t.accessSecure}</h1>
+            
+            <div className="bg-zinc-900/50 p-6 rounded-3xl mb-8 border border-white/5">
+              <p className="text-zinc-400 text-sm leading-relaxed">
+                {initError === 'PERMISSION_DENIED' ? t.howToFix : t.requirement}
+              </p>
+            </div>
+
+            <button 
+              onClick={() => handleStart()} 
+              className="w-full py-5 bg-white text-black rounded-[2rem] font-bold text-lg active:scale-95 transition-transform flex items-center justify-center gap-2 mb-4"
+            >
+              {initError === 'PERMISSION_DENIED' && <RefreshCw className="w-5 h-5" />}
+              {initError === 'PERMISSION_DENIED' ? t.retry : t.getStarted}
+            </button>
+            
+            <button 
+              onClick={() => setLang(lang === 'en' ? 'zh' : 'en')} 
+              className="text-[10px] text-zinc-600 uppercase font-bold tracking-[0.3em]"
+            >
+              Language: {lang === 'en' ? 'English' : '中文'}
+            </button>
           </motion.div>
         )}
       </AnimatePresence>
 
-      <div className="fixed opacity-0 pointer-events-none"><canvas ref={keepAliveCanvasRef} width={1} height={1} /></div>
+      <div className="fixed opacity-0 pointer-events-none z-[-100]"><canvas ref={keepAliveCanvasRef} width={1} height={1} /></div>
     </div>
   );
 }

@@ -23,6 +23,10 @@ export const useCamera = () => {
     const targetWidth = quality === '1080p' ? 1920 : 1280;
     const targetHeight = quality === '1080p' ? 1080 : 720;
     const targetFPS = frameRate || 30;
+    
+    if (stream) {
+      stream.getTracks().forEach(track => track.stop());
+    }
 
     // Ensure both camera and microphone are requested as per user's strict requirement
     try {
@@ -31,21 +35,18 @@ export const useCamera = () => {
           facingMode: activeMode, 
           width: { ideal: targetWidth }, 
           height: { ideal: targetHeight },
-          frameRate: { 
-            ideal: targetFPS,
-            min: targetFPS === 60 ? 30 : 15 // Allow some flexibility to prevent crash
-          }
+          frameRate: { ideal: targetFPS }
         },
         audio: {
           echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true
+          noiseSuppression: true
         },
       };
 
       const newStream = await navigator.mediaDevices.getUserMedia(constraints);
       
       setStream(newStream);
+      setFacingMode(activeMode);
       
       if (videoRef.current) {
         videoRef.current.srcObject = newStream;
@@ -55,12 +56,13 @@ export const useCamera = () => {
       return newStream;
     } catch (err) {
       console.error('Error accessing camera:', err);
-      // Fallback for strict constraints failure
-      if (quality === '1080p' || frameRate === 60) {
-        console.log('Falling back to standard constraints...');
-        return startCamera(mode, '720p', 30);
+      // Fallback: Try with just camera if audio fails
+      if (err instanceof Error && (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError')) {
+        throw err; // User blocked, don't retry automatically
       }
-      throw err;
+      
+      console.log('Falling back to basic constraints...');
+      return await navigator.mediaDevices.getUserMedia({ video: { facingMode: activeMode }, audio: true });
     }
   }, [facingMode]);
 
@@ -68,29 +70,20 @@ export const useCamera = () => {
     if (stream) {
       stream.getTracks().forEach(track => track.stop());
       setStream(null);
-      if (videoRef.current) {
-        videoRef.current.srcObject = null;
-      }
     }
   }, [stream]);
 
   const switchCamera = useCallback(async (qualitySetting?: '720p' | '1080p', fpsSetting?: number) => {
-    if (isRecording) {
-      console.warn('Cannot switch camera while recording');
-      return;
-    }
-
+    if (isRecording) return;
     const nextMode = facingMode === 'user' ? 'environment' : 'user';
-    setFacingMode(nextMode);
-
-    // Stop current stream
+    
+    // Stop current explicitly before starting new one to avoid hardware lock
     if (stream) {
-      stream.getTracks().forEach(track => track.stop());
+      stream.getTracks().forEach(t => t.stop());
     }
-
-    // Start with new mode
+    
     await startCamera(nextMode, qualitySetting, fpsSetting);
-  }, [facingMode, stream, isRecording, startCamera]);
+  }, [facingMode, isRecording, startCamera, stream]);
 
   const startRecording = useCallback((qualitySetting?: '720p' | '1080p') => {
     if (!stream || !videoRef.current) return;
@@ -100,40 +93,16 @@ export const useCamera = () => {
     const mimeTypes = [
       'video/mp4;codecs=h264,aac',
       'video/webm;codecs=h264,opus',
-      'video/webm;codecs=vp9,opus',
       'video/mp4',
       'video/webm',
     ];
     
     const supportedMimeType = mimeTypes.find(type => MediaRecorder.isTypeSupported(type)) || '';
     
-    // Crucial: Use a high-quality Canvas/Video capture stream if in PiP to keep frames alive,
-    // but ALWAYS manually merge the original high-fidelity audio track.
-    let streamToRecord: MediaStream;
-    const video = videoRef.current;
+    // Use the direct MediaStream to avoid "Screen Recording" prompts caused by captureStream
+    const streamToRecord = stream;
 
-    try {
-      if ((video as any).captureStream) {
-        // Create a new stream for recording
-        const visualStream = (video as any).captureStream(60); // Match max requested FPS
-        const combinedStream = new MediaStream();
-        
-        // Add visual tracks
-        visualStream.getVideoTracks().forEach(track => combinedStream.addTrack(track));
-        
-        // Add ORIGINAL audio tracks (bypass the element's mute/state)
-        stream.getAudioTracks().forEach(track => combinedStream.addTrack(track));
-        
-        streamToRecord = combinedStream;
-      } else {
-        streamToRecord = stream;
-      }
-    } catch (e) {
-      console.warn('Advanced stream composition failed, using direct stream:', e);
-      streamToRecord = stream;
-    }
-
-    // Optimal Bitrate for High Fidelity (6-12 Mbps for 1080p)
+    // Optimal Bitrate
     const videoBitrate = qualitySetting === '1080p' ? 8000000 : 4000000;
 
     const mediaRecorder = new MediaRecorder(streamToRecord, {
