@@ -104,6 +104,8 @@ export default function App() {
       hide: '隐藏',
       show: '显示',
       pip: '画中画',
+      fullscreen: '全屏模式',
+      addHome: '添加到主屏幕以获得全屏体验',
       fix: '一键修复',
       healthNominal: '系统正常',
       healthWarning: '系统异常',
@@ -148,6 +150,8 @@ export default function App() {
       hide: 'Hide',
       show: 'Show',
       pip: 'PiP',
+      fullscreen: 'Fullscreen',
+      addHome: 'Add to Home Screen for App mode',
       fix: 'Fix System',
       healthNominal: 'Healthy',
       healthWarning: 'Warning',
@@ -294,6 +298,14 @@ export default function App() {
     if (videoRef.current) videoRef.current.play().catch(() => {});
   };
 
+  const toggleFullscreen = () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(() => {});
+    } else if (document.exitFullscreen) {
+      document.exitFullscreen();
+    }
+  };
+
   return (
     <div className="h-[100dvh] bg-black flex flex-col font-sans overflow-hidden overscroll-none pb-[env(safe-area-inset-bottom)]">
       <AnimatePresence>
@@ -311,9 +323,9 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      <div className="flex-1 flex flex-col overflow-y-auto px-4 gap-6 scrollbar-hide">
-        <div className={`transition-all duration-500 shrink-0 ${!isDisguised && activeTab === 'record' && isInitialized ? 'relative w-full aspect-video rounded-[3rem] shadow-2xl bg-zinc-900 overflow-hidden' : 'fixed w-8 h-8 opacity-0 pointer-events-none'}`}>
-          <video ref={videoRef} autoPlay muted playsInline className={`w-full h-full object-cover ${facingMode === 'user' ? 'scale-x-[-1]' : ''}`} />
+      <div className="flex-1 flex flex-col overflow-y-auto px-4 gap-6 scrollbar-hide overscroll-contain">
+        <div className={`transition-all duration-500 shrink-0 ${!isDisguised && activeTab === 'record' && isInitialized ? 'relative w-full rounded-[3rem] shadow-2xl bg-zinc-900 overflow-hidden min-h-[200px]' : 'fixed w-8 h-8 opacity-0 pointer-events-none'}`}>
+          <video ref={videoRef} autoPlay muted playsInline className={`w-full h-auto max-h-[60vh] object-contain ${facingMode === 'user' ? 'scale-x-[-1]' : ''}`} />
           {isRecording && !isDisguised && <div className="absolute top-6 left-6 flex items-center gap-2 bg-black/50 px-3 py-1 rounded-full"><div className="w-2 h-2 bg-ios-red rounded-full animate-pulse" /><span className="text-xs font-mono">{formatTime(recordingTime)}</span></div>}
           {!isDisguised && activeTab === 'record' && (
             <div className="absolute top-6 right-6 flex gap-2">
@@ -408,6 +420,16 @@ export default function App() {
               <button onClick={() => setIsSettingsOpen(false)} className="text-ios-blue font-bold">{t.back}</button>
             </div>
             <div className="space-y-6 overflow-y-auto">
+              <div className="bg-zinc-900 rounded-3xl p-5">
+                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-3 block">{t.fullscreen}</label>
+                <div className="space-y-4">
+                  <button onClick={toggleFullscreen} className="w-full py-4 bg-ios-blue text-white rounded-2xl font-bold flex items-center justify-center gap-2">
+                    <Minimize2 className="w-5 h-5 rotate-45" />
+                    {t.fullscreen}
+                  </button>
+                  <p className="text-[10px] text-zinc-600 text-center uppercase tracking-widest">{t.addHome}</p>
+                </div>
+              </div>
               <div className="bg-zinc-900 rounded-3xl p-5">
                 <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-3 block">{t.disguise}</label>
                 <div className="flex gap-2">

@@ -75,12 +75,21 @@ export const useCamera = () => {
 
   const switchCamera = useCallback(async (qualitySetting?: '720p' | '1080p', fpsSetting?: number) => {
     if (isRecording) return;
+    
     const nextMode = facingMode === 'user' ? 'environment' : 'user';
     
-    // Stop current explicitly before starting new one to avoid hardware lock
+    // Hard stop all tracks
     if (stream) {
-      stream.getTracks().forEach(t => t.stop());
+      stream.getTracks().forEach(t => {
+        t.stop();
+        t.enabled = false;
+      });
     }
+    setStream(null);
+    if (videoRef.current) videoRef.current.srcObject = null;
+
+    // Small delay to let hardware release
+    await new Promise(r => setTimeout(r, 300));
     
     await startCamera(nextMode, qualitySetting, fpsSetting);
   }, [facingMode, isRecording, startCamera, stream]);
